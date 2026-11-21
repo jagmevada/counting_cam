@@ -76,8 +76,13 @@ lock = threading.RLock()  # counts, history and files are used from the gate, wi
 state = {"date": "", "shows": [], "days": {}}  # shows = today's finished ones, one entry per gate per reset
 
 
+# A day of shows runs from DAY_START o'clock to the same hour next morning, so entry that goes on past
+# midnight stays with its evening instead of being cut in two at 00:00.
+DAY_START = 6
+
+
 def today():
-    return time.strftime("%Y-%m-%d")
+    return time.strftime("%Y-%m-%d", time.localtime(time.time() - DAY_START * 3600))
 
 
 def clock():
@@ -85,9 +90,9 @@ def clock():
 
 
 def sod(hms):
-    """Seconds since midnight of an HH:MM:SS string."""
+    """Seconds since the day's start (DAY_START) of an HH:MM:SS string: times either side of midnight compare."""
     h, m, sec = map(int, hms.split(":"))
-    return h * 3600 + m * 60 + sec
+    return (h - DAY_START) % 24 * 3600 + m * 60 + sec
 
 
 def cam_pass():
@@ -426,7 +431,7 @@ def undo_reset():
 
 
 def new_day():
-    """The date changed (midnight, or the first start of a day): file the old day's total, start clean."""
+    """The date changed (DAY_START o'clock, or the first start of a day): file the old day's total, start clean."""
     with lock:
         reset(note="day end")
         total = sum(s["in"] - s["out"] for s in state["shows"])
@@ -455,7 +460,7 @@ def web(args):
                    "battery": battery(),
                    "log": numbered(), "nonce": nonce[0], "inside": show_now(),
                    # gates still counting for the show that ended -> when they reset themselves
-                   "pending": {g.label: time.strftime("%H:%M:%S", time.gmtime(sod(g.mark[2]) + SHOW_WINDOW))
+                   "pending": {g.label: time.strftime("%H:%M:%S", time.gmtime(sod(g.mark[2]) + SHOW_WINDOW + DAY_START * 3600))
                                for g in gates if g.mark},
                    # these two only keep a phone's cached copy of the first page version working
                    "shows": [], "show_start": min(g.start for g in gates),
@@ -640,7 +645,7 @@ def main():
                 g.counted.clear()
         print(clock(), "took over from", old, flush=True)
 
-    if state["date"] != today():
+    if state["date"] < today():  # never backwards: that would file a day twice
         new_day()
     publish = None
     if LIVE and not args.no_web:
@@ -657,7 +662,7 @@ def main():
         if time.time() - last_log >= 60:
             last_log = time.time()
             log_counts()
-            if state["date"] != today():
+            if state["date"] < today():
                 new_day()
         settle()
         if publish and time.time() - last_pub >= 2:

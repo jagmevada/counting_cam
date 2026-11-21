@@ -37,6 +37,10 @@ has stopped for 5 s.
   the window (click it first). "Reset both gates" on the page, or `r` then `y`, is the
   master reset. A reset files that gate's finished count in today's list and in
   `counts.csv` and starts it from 0. The day and event totals are not reset.
+- **A day runs from 06:00 to 06:00** (`DAY_START` in `counter.py`), not midnight to
+  midnight: on 2026-11-21 shows were still going in at 23:50, and a day change at 00:00
+  would have zeroed both gates mid-entry and split that evening's total over two dates.
+  Shows after midnight count with the evening they belong to.
 - **The 4-minute show window** (`SHOW_WINDOW` in `counter.py`). Each volunteer resets their
   own gate when they start admitting the next show, so the two resets come up to 4 minutes
   apart; a show is about 30 minutes entry to entry. Resets within 4 minutes of each other
