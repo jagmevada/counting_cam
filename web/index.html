@@ -36,8 +36,9 @@
   .left { font-size: 1.25rem; font-weight: 600; margin: 2px 0 12px; }
   .s-ok { color: var(--ok); } .s-warn { color: var(--warn); } .s-bad { color: var(--bad); }
   .gates { display: grid; gap: 8px; }
-  .gate { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px;
+  .gate { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 12px;
           padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; font-variant-numeric: tabular-nums; }
+  .gate .btns { grid-column: 1 / -1; display: flex; gap: 8px; }
   .gate .name { font-size: 1.15rem; font-weight: 700; }
   .gate .num { text-align: right; }
   .gate .num b { font-size: 1.5rem; }
@@ -49,7 +50,8 @@
   button { font: inherit; font-weight: 600; min-height: 52px; padding: 0 18px; border-radius: 12px;
            border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; flex: 1 1 160px; }
   button.danger { background: var(--danger-bg); color: var(--danger-ink); border-color: var(--danger-bg); }
-  button.mini { min-height: 46px; padding: 0 14px; border-color: var(--bad); color: var(--bad); }
+  button.mini { min-height: 46px; padding: 0 14px; border-color: var(--bad); color: var(--bad); flex: 1 1 0; }
+  button.mini.plain { border-color: var(--line); color: var(--ink); }
   button:disabled { opacity: .55; cursor: default; }
   button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   .total { font-size: 1.7rem; font-weight: 700; margin: 0 0 10px; font-variant-numeric: tabular-nums; }
@@ -107,6 +109,8 @@
   <form id="form">
     <h2 id="dlgTitle"></h2>
     <p id="dlgText" class="muted"></p>
+    <label for="num" id="numLabel" hidden>New count</label>
+    <input id="num" type="number" inputmode="numeric" min="0" max="99999" step="1" hidden>
     <label for="pin">PIN</label>
     <input id="pin" inputmode="numeric" autocomplete="off" required>
     <p class="warn" id="dlgMsg" hidden></p>
@@ -131,7 +135,7 @@ const hm = t => (t || "").slice(0, 5);
 let st = null;          // last status from the laptop
 let fresh = 0;          // when a live (not stored) status last arrived
 let pending = null;     // command waiting for the laptop's answer
-let mode = "reset";     // "reset" or "undo"
+let mode = "reset";     // "reset", "undo" or "set"
 let target = null;      // gate name for a one-gate reset, null = all gates
 let built = "";         // which gates the gate rows were built for
 const rows = {};        // gate name -> its row's elements
@@ -175,9 +179,17 @@ function buildGates(names) {
     btn.type = "button";
     btn.setAttribute("aria-label", "Reset " + g);
     btn.onclick = () => ask("reset", g);
-    d.append(name, num, btn);
+    const fix = cell("button", "Set number");
+    fix.className = "mini plain";
+    fix.type = "button";
+    fix.setAttribute("aria-label", "Set the number for " + g);
+    fix.onclick = () => ask("set", g);
+    const btns = document.createElement("div");
+    btns.className = "btns";
+    btns.append(fix, btn);
+    d.append(name, num, btns);
     box.appendChild(d);
-    rows[g] = { cam, meta, n, io, btn };
+    rows[g] = { cam, meta, n, io, btn, fix };
   });
 }
 
@@ -258,7 +270,7 @@ function tick() {
   link.textContent = live ? "LIVE " + st.at : st ? "OFFLINE, last seen " + st.at : "connecting…";
   $("btnReset").disabled = !live;
   $("btnUndo").disabled = !live;
-  Object.values(rows).forEach(r => { r.btn.disabled = !live; });
+  Object.values(rows).forEach(r => { r.btn.disabled = !live; r.fix.disabled = !live; });
 }
 
 function toast(text) {
@@ -281,7 +293,14 @@ function ask(which, gate) {
   mode = which;
   target = gate || null;
   const names = Object.keys(st.gates);
-  if (which === "undo") {
+  $("num").hidden = $("numLabel").hidden = which !== "set";
+  $("num").required = which === "set";
+  if (which === "set") {
+    $("dlgTitle").textContent = "Set " + target + "'s count by hand?";
+    $("dlgText").textContent = "For correcting the count, for example after a hand count. " + target + " shows " +
+      fmt(net(target)) + " now; the camera carries on counting from the number you enter.";
+    $("num").value = net(target);
+  } else if (which === "undo") {
     $("dlgTitle").textContent = "Undo the last reset?";
     $("dlgText").textContent = "Whatever the last reset closed is reopened and keeps counting. Use this after a reset pressed by mistake.";
   } else if (target) {
@@ -295,7 +314,7 @@ function ask(which, gate) {
     $("dlgText").textContent = "Every gate's count (" + names.map(g => g + ": " + fmt(net(g))).join(", ") +
       ") is saved in today's list, then they all start again from 0.";
   }
-  $("btnGo").textContent = which === "undo" ? "Undo" : target ? "Reset " + target : "Reset all";
+  $("btnGo").textContent = which === "set" ? "Set" : which === "undo" ? "Undo" : target ? "Reset " + target : "Reset all";
   $("dlgMsg").hidden = true;
   $("btnGo").disabled = false;
   try { $("pin").value = localStorage.getItem("pin") || ""; } catch (e) { /* private window: no saved PIN */ }
@@ -319,10 +338,17 @@ $("form").onsubmit = async e => {
   $("btnGo").disabled = true;
   $("dlgMsg").hidden = true;
   const id = Math.random().toString(36).slice(2);
-  const gate = mode === "reset" ? target : null;
+  const gate = mode === "undo" ? null : target;
+  const value = mode === "set" ? Math.round(Number($("num").value)) : null;
+  if (mode === "set" && !(value >= 0 && value <= 99999)) { fail("Enter a number from 0 to 99999."); return; }
   pending = { id, pin, timer: setTimeout(() => fail("No answer from the counter laptop. Is it running and online?"), 7000) };
-  const msg = { cmd: mode, id, mac: await sign(pin, gate ? mode + "|" + gate + "|" + st.nonce : mode + "|" + st.nonce) };
+  const parts = [mode];
+  if (gate) parts.push(gate);
+  if (value != null) parts.push(value);
+  parts.push(st.nonce);
+  const msg = { cmd: mode, id, mac: await sign(pin, parts.join("|")) };
   if (gate) msg.gate = gate;
+  if (value != null) msg.value = value;
   client.publish(TOPIC + "/cmd", JSON.stringify(msg));
 };
 
@@ -342,7 +368,8 @@ client.on("message", (topic, payload, packet) => {
       try { localStorage.setItem("pin", pending.pin); } catch (e) { /* not saved */ }
       pending = null;
       $("dlg").close();
-      toast(m.cmd === "undo" ? "Reset undone" : m.gate ? m.gate + " reset, counting from 0" : "All gates reset for the next show");
+      toast(m.cmd === "set" ? m.gate + " set to " + fmt(m.value) : m.cmd === "undo" ? "Reset undone"
+            : m.gate ? m.gate + " reset, counting from 0" : "All gates reset for the next show");
     } else {
       fail(m.cmd === "undo" ? "Not accepted: wrong PIN, or there is nothing to undo." : "Not accepted: wrong PIN. Try again.");
     }

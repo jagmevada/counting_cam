@@ -371,6 +371,18 @@ def reset(gs=None, note="show end"):
         save_state()
 
 
+def set_count(g, n):
+    """Manual correction from the phone page: this gate's running count (in - out) becomes n and
+    the camera carries on from there. The old numbers go to the log first."""
+    with lock:
+        old = g.n_in - g.n_out
+        log_counts(f"count set by hand: {old} -> {n}", [g])
+        g.n_in += n - old
+        if g.mark:  # waiting for its reset: the count it will file moves by the same amount
+            g.mark[0] += n - old
+        save_state()
+
+
 def last_act():
     return max([e["act"] for e in state["shows"]] + [g.mark[3] for g in gates if g.mark], default=0)
 
@@ -449,10 +461,10 @@ def web(args):
     def on_message(c, _, m):
         try:
             msg = json.loads(m.payload)
-            cmd, gate = msg["cmd"], msg.get("gate")  # no gate = all gates
-            text = f"{cmd}|{gate}|{nonce[0]}" if gate else f"{cmd}|{nonce[0]}"
+            cmd, gate, value = msg["cmd"], msg.get("gate"), msg.get("value")  # no gate = all gates
+            text = "|".join(str(x) for x in (cmd, gate, value, nonce[0]) if x is not None)
             want = hmac.new(pin.encode(), text.encode(), hashlib.sha256).hexdigest()
-            ok = cmd in ("reset", "undo") and hmac.compare_digest(want, str(msg["mac"]))
+            ok = cmd in ("reset", "undo", "set") and hmac.compare_digest(want, str(msg["mac"]))
         except (ValueError, KeyError, TypeError):
             return
         if ok:
@@ -462,10 +474,15 @@ def web(args):
                 ok = undo_reset()
             elif gate and not gs:
                 ok = False  # no such gate: never fall back to resetting everything
+            elif cmd == "set":
+                ok = bool(gs) and isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 99999
+                if ok:
+                    set_count(gs[0], value)
             else:
                 reset(gs, "show end (phone)")
-            print(clock(), "phone:", cmd, gate or "all gates", "done" if ok else "not done", flush=True)
-        c.publish(WEB_TOPIC + "/ack", json.dumps({"id": msg.get("id"), "cmd": cmd, "gate": gate, "ok": ok}))
+            print(clock(), "phone:", cmd, gate or "all gates", "" if value is None else value,
+                  "done" if ok else "not done", flush=True)
+        c.publish(WEB_TOPIC + "/ack", json.dumps({"id": msg.get("id"), "cmd": cmd, "gate": gate, "value": value, "ok": ok}))
         publish()
 
     c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, transport="websockets")

@@ -36,6 +36,9 @@ has stopped for 5 s.
   resets within 4 minutes is reset automatically, dated back to the first gate's reset:
   its count up to that moment is filed with the old show and the rest counts for the new
   one. Today's list shows one row per show.
+- **Correcting a count by hand:** "Set number" beside a gate on the phone page. That gate's
+  running count becomes the number entered and the camera carries on from it; the old and
+  new values go to `counts.csv` ("count set by hand: a -> b"). Use it after a hand count.
 - Reset by mistake: "Undo last reset" on the page, or `u` then `y`. It takes back the last
   press (one gate or both); the count is reopened with whatever was counted since.
 - `l` redraw a line, `q` quit. Everything survives a restart (`counts.json`).
