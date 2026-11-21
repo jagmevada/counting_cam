@@ -1,19 +1,134 @@
 # Dome entry people counter — handoff
 
-Goal: count people entering the dome through **2 entry gates**, one CP Plus 4MP camera per
-gate, live total = gate 1 IN + gate 2 IN. This repo has a working 2-camera viewer and a
-first-version counter. Counting needs an **NVIDIA GPU laptop** (old laptop: 0.8 fps).
+Goal: live count of people entering the dome's drama show (**capacity 1000**) through
+**2 entry gates**, one CP Plus 4MP camera per gate, so staff can stop the queue when the
+house is nearly full. Shows run roughly every 30 min from 4:30 pm, peak rush 7–10 pm.
+7-day event, 19–25 Nov 2026; the counter started on day 3 (21 Nov). The owner's rule:
+never miss a person or a walking child; counting a carried infant now and then is fine.
 
-## Status (2026-11-21, at the venue)
-- Both cameras installed at the gates and streaming: 1280x720 sub stream at 25 fps each,
-  via `camviewer.py`. Link to PoE switch 1 Gbps.
-- `counter.py` written, tested once on last year's phone clip (eye-level, dense crowd):
-  stock YOLO **person** model detected only ~7 of ~150 people. Cause: eye-level angle +
-  full-body model. Not yet tested on the real gate cameras.
-- Cam 2 view (looking down the entry lane from above, steep angle) is a much better angle.
+## Status (2026-11-21 evening, at the venue)
+- `counter.py` runs live on the venue laptop (Core Ultra 7 255H, Intel Arc 140T, **no
+  NVIDIA needed**): both gates at 25 fps.
+- Tuned and checked on recordings of real afternoon entry at both gates (light crowd).
+- Phone page with live numbers, reset and undo: https://jagmevada.github.io/counting_cam/
+- `recorder.py` is saving both cameras' video for training and later checks.
+- **Not yet checked:** peak-hour density (7–10 pm) and after-dark lighting.
+
+## Run it
+```
+python counter.py
+```
+Opens the "Dome entry counter" window: both gates, the count line, and a header with
+`INSIDE n / 1000`, per-gate numbers and the total. Header turns orange in the last 100
+places and red at house full. `NO VIDEO: Gate n - NOT COUNTING` in red means that feed
+has stopped for 5 s.
+
+- **Before each show's entry: reset.** Either the red button on the phone page, or `r`
+  then `y` in the window (click it first). The finished show is filed in today's list and
+  in `counts.csv`, and the count starts from 0. The day and event totals are not reset.
+- Reset by mistake: "Undo last reset" on the page, or `u` then `y`. The show is reopened
+  with whatever was counted since.
+- `l` redraw a line, `q` quit. Everything survives a restart (`counts.json`).
+- Do not restart during entry: nobody is counted for the ~13 s it takes.
+- Each picture shows its gate number large, with the camera address and that gate's in /
+  out / frame rate small beneath. The header's second line ends with `TODAY: n`.
+- Head dots: yellow = not in yet, green = counted in, red = inside but never counted.
+- Gate 1 = camera .252, Gate 2 = camera .251. IN = walking towards the camera.
+
+## Phone page
+https://jagmevada.github.io/counting_cam/ (the `gh-pages` branch; source in `web/index.html`).
+It shows this show, today's shows, each day of the event and the event total, and has the
+reset and undo buttons.
+
+- How it connects: GitHub Pages cannot reach the laptop, so `counter.py` publishes the
+  numbers every 2 s to a free public MQTT broker (`WEB_HOST`, `WEB_TOPIC` at the top of
+  `counter.py`; the same two values are at the top of the page's script) and listens there
+  for commands. Only counts, gate names and camera addresses go out. No video.
+- Anyone with the link can see the numbers. Reset and undo need the **PIN in
+  `web_pin.txt`** (made on first start; edit the file and restart to change it). The PIN
+  is a guard against casual taps, not strong security.
+- The page says `LIVE hh:mm:ss` while numbers arrive, `OFFLINE` when they stop.
+- It needs internet on the laptop and the phone. Counting never depends on it:
+  `--no-web` turns it off, and the keys above always work.
+- To publish a changed page: commit `web/index.html` as `index.html` on `gh-pages`.
+
+## Recording video
+```
+python recorder.py            # both gates, both streams, until 23:30 today
+```
+ffmpeg copies the cameras' own H.265 video to `recordings/<date>/` with no re-encoding
+(almost no CPU): `gateN_sub_<time>.mkv` (720p, exactly what the counter sees) and
+`gateN_main_<time>.mkv` (2560x1440), a new file every 10 minutes. About 3.6 GB per hour
+in total. It restarts a dropped stream, and stops at `--until` or when the disk has less
+than 20 GB free. Start it again each day. Replay a file through the counter:
+`python counter.py <file.mkv> --nogui --line x1,y1,x2,y2,ix,iy`.
+`recordings/2026-11-21/early_tests/` holds the short clips the numbers below came from.
+
+## How it counts
+- Detector: YOLO26-L (people), exported once to OpenVINO and run on the Intel GPU
+  (`--device xpu`), 640 px input, 720p sub stream. First run downloads and exports it.
+- Tracker: ByteTrack, set explicitly (see the comment in `Gate.track`).
+- A person counts when the **top-centre of their box (the head)** crosses the line. The
+  cameras look down steeply, so heads stay visible in a group.
+- Hysteresis (`MARGIN`, `OUT_MARGIN` at the top of `counter.py`): IN once the head is
+  11 px past the line, OUT only when it is 90 px back. Pausing on the line does not count.
+- `INSIDE` = in − out, so staff walking in and out cancel.
+- Walking children must count. Carried infants are sometimes detected and counted, which
+  the owner accepts.
+
+## Count lines
+Stored in `line_<ip>.json` as fractions of the frame: `[[x1,y1],[x2,y2],[inside x,y]]`.
+Current lines are the owner's blue lines from `new_line.png`:
+
+| | Gate 1 (.252) | Gate 2 (.251) |
+|---|---|---|
+| line | (0.114, 0.5245) – (0.839, 0.53) | (0.191, 0.5788) – (0.761, 0.581) |
+| height at 720p | y ≈ 380 | y ≈ 418 |
+
+The left ends were later extended 10% at the owner's request. The drawn ends are for
+display only: counting uses the line's height across the whole frame (limiting it to the
+drawn ends lost 4 of 67 people at gate 1 in testing).
+
+Gate 2, people counted in on three recordings (6 min total), same rule:
+
+| line height (720p) | in | out |
+|---|---|---|
+| y = 356 (first line) | 85 | 11 |
+| **y = 418 (current)** | **90** | **7** |
+| y = 450 | 93 | 7 |
+| y = 480 | 94 | 8 |
+
+The first line missed short children: coming round the left post, their heads first
+appear already below it. Lower lines count 3–4% more than the current one; the owner
+judged y = 480 too low on the live view. Gate 1 is flat from y = 360 to 520 (66–69 in on
+a 2.5 min recording), so its line is not critical.
+
+## Measured
+- Speed on the Arc 140T at 384x640, per frame: YOLO26-S 5.8 ms, -M 8.8 ms, -L 10.7 ms,
+  -X 16.6 ms. L at 544x960 is 19.6 ms (too slow for two cameras at 25 fps).
+- Tracker check, gate 1, 2.5 min: library default tracker 61 in, ByteTrack 67 in. Of the
+  6 extra, 5 were real people (4 of them children in a group) and 1 was a child counted
+  twice. So expect ByteTrack to run about 1–2% high, not low.
+- No full hand count has been compared yet. Do one: count 50–100 people at a gate with a
+  clicker and compare with that gate's `in`.
+
+## Open items
+1. Peak-hour check (7–10 pm): hand-count 5 min per gate from `recordings/` and compare.
+   If dense flow is missed, the next step is a crowd-trained **head** detector (the
+   recordings are the training data).
+2. After dark: confirm detection still works under the venue lights / camera night mode.
+3. Region of interest (owner's idea): crop each frame to the gate area before detection,
+   so the same 640 px model sees people about a third larger. Likely to help with small
+   children. Test on recordings first; not built.
+4. Gate 2's line 30 px lower counted 3% more in testing (table above). With the owner's
+   "never miss a child" rule this is worth re-offering.
+5. A start-up stall happened once (both gates froze after loading). Models now load one
+   at a time at start-up; watch the first start of each day.
+6. A paper RESET sign held up to the camera was considered and dropped in favour of the
+   phone page. If wanted later, use a printed ArUco code (`cv2.aruco`), not plain text.
 
 ## Cameras
-| | Cam 1 | Cam 2 |
+| | Cam 1 = Gate 2 | Cam 2 = Gate 1 |
 |---|---|---|
 | IP (static) | 192.168.1.251 | 192.168.1.252 |
 | MAC | F8:20:97:BD:55:13 | F8:20:97:BD:54:FC |
@@ -22,24 +137,29 @@ first-version counter. Counting needs an **NVIDIA GPU laptop** (old laptop: 0.8 
 - Brand CP Plus (Dahua-based firmware), 4MP. User `admin`, password: **ask the owner**
   (not stored in this repo). Camera clock is wrong (shows 15-11-2026) — fix in
   Setup → System → General → Date & Time.
-- **Stream URL** (from the camera page):
-  `rtsp://<user>:<pass>@<ip>:554/video/live?channel=1&subtype=0`
-  - `subtype=0` main: 2560x1440, 25 fps, **H.265**
-  - `subtype=1` sub: 1280x720, 25 fps (light)
-  - Port 554 currently accepts **RTSP over TLS only** → use `rtsps://`. Plain `rtsp://`
-    gets reset. The scripts try plain first, then rtsps, so both cases work.
+- **Stream URL** (checked 2026-11-21 with login):
+  `rtsps://<user>:<pass>@<ip>:554/video/live?channel=1&subtype=N`
+  - `subtype=0` main: 2560x1440, 25 fps, H.265
+  - `subtype=1` sub: 1280x720, 25 fps, H.265
+  - The standard Dahua path `/cam/realmonitor` returns **404** on this firmware.
+  - Port 554 accepts **RTSP over TLS only** (`rtsps://`); plain `rtsp://` is dropped.
 - Web UI: https://<ip> (self-signed cert).
 - Camera old CGI/RPC APIs (`/cgi-bin/...`, `/RPC2`) return 404 on this firmware.
 
 ## Network setup on the PC
-Cameras are on 192.168.1.x. If the PC's Wi-Fi is **also** on 192.168.1.x, don't give the
-Ethernet a /24 (overlap). Instead (admin PowerShell):
+Cameras are on 192.168.1.x. On the venue laptop the USB Ethernet adapter is
+"Ethernet 2", set to static `192.168.1.201/24` with no gateway (Wi-Fi is on 172.16.x and
+carries the internet). Admin PowerShell:
+```powershell
+Set-NetIPInterface -InterfaceAlias 'Ethernet 2' -Dhcp Disabled
+New-NetIPAddress -InterfaceAlias 'Ethernet 2' -IPAddress 192.168.1.201 -PrefixLength 24
+```
+If the PC's Wi-Fi is **also** on 192.168.1.x, don't give the Ethernet a /24 (overlap):
 ```powershell
 New-NetIPAddress -InterfaceAlias Ethernet -IPAddress 192.168.1.201 -PrefixLength 32
 New-NetRoute -InterfaceAlias Ethernet -DestinationPrefix 192.168.1.251/32 -RouteMetric 1
 New-NetRoute -InterfaceAlias Ethernet -DestinationPrefix 192.168.1.252/32 -RouteMetric 1
 ```
-If Wi-Fi is on another subnet, just set Ethernet static `192.168.1.201/24`.
 Check: `ping 192.168.1.251` and `.252`.
 
 Known issue seen in the office: PoE switch link dropped repeatedly + cameras clicking
@@ -56,32 +176,25 @@ setx CAM_PASS "<camera password>"
 ```
 git clone <this repo> && cd <repo>
 python -m pip install -r requirements.txt
-# GPU: install CUDA torch first, see https://pytorch.org/get-started/locally/
-python -c "import torch; print(torch.cuda.is_available())"   # must print True
+python counter.py
 ```
-Python 3.11+ (tested on 3.13). `yolo11s.pt` downloads automatically on first run.
+- Tested on Python 3.14, Ultralytics 8.4, OpenVINO 2026.4.
+- **OpenCV is pinned to 4.10.0.84.** OpenCV 5.x's bundled FFmpeg rejects the cameras'
+  self-signed certificate (`tls ... 0x80090325`) and no stream opens.
+- NVIDIA laptop instead: install CUDA torch, then `python counter.py --device 0`.
+- The laptop screen is scaled 200%, so the counter window is resizable; drag or maximise it.
 
 ## Files
-- `camviewer.py` — Tk viewer, both cams side by side, auto-connects with `CAM_PASS`,
-  shows transport/resolution/fps per tile. Run: `pythonw camviewer.py`.
-  Sub stream by default; Main (HD) is H.265 4MP — old laptop's iGPU can't decode it
-  (lag); any modern NVIDIA/Intel laptop is fine.
-- `counter.py` — YOLO + ByteTrack line-crossing counter.
-  - Live: `python counter.py 192.168.1.251 192.168.1.252`
-  - Clip: `python counter.py clip.mp4 --save out.mp4 [--line x1,y1,x2,y2,ix,iy] [--nogui]`
-  - First run per camera: click 2 points = count line, 3rd click = INSIDE (dome) side.
-    Saved to `line_<ip>.json`.
-  - Keys: `l` redraw line, `r` then `y` reset, `q` quit.
-  - Totals persist in `counts.json` (restart resumes); per-minute rows in `counts.csv`.
-  - Defaults: `--model yolo11s.pt --imgsz 960 --conf 0.3 --subtype 0`.
-
-## Next steps (in order)
-1. On the GPU laptop: run `counter.py` on both live cameras, draw lines across each gate.
-2. Walk-test: 10 in / 5 out per gate → expect IN=10, OUT=5. Note accuracy.
-3. If people in dense flow are missed: switch to a **head-detection** model (crowd-trained
-   YOLO head weights) and count by head position instead of box centre
-   (`counter.py`, the `ponytail:` comment in `Gate.run`). Use `--subtype 0` (4MP) on GPU.
-4. Record 5 min of real crowd per gate, manual-count it, compare (target ≥ 90–95%).
+- `counter.py` — the counter (above).
+  - Clip test: `python counter.py clip.avi --nogui --save out.mp4 --line x1,y1,x2,y2,ix,iy`
+    (fractions 0–1). Clip runs never touch the live totals.
+  - Defaults: `--model yolo26l.pt --imgsz 640 --device xpu --conf 0.1 --subtype 1
+    --capacity 1000`. `--conf 0.1` is deliberate: the tracker uses weak detections to hold
+    a half-hidden person.
+- `recorder.py` — saves the cameras' video with ffmpeg (see Recording video).
+- `web/index.html` — the phone page (see Phone page). Needs `paho-mqtt` on the laptop.
+- `camviewer.py` — plain Tk viewer, both cams side by side. Run: `pythonw camviewer.py`.
+- `251_cam.png`, `252_cam.png`, `new_line.png` — the owner's line drawings.
 
 ## Exact working stream URL (test in VLC: Media → Open Network Stream)
 ```
@@ -106,6 +219,7 @@ Start the viewer with `pythonw camviewer.py` (don't launch it with a hidden wind
 the Tk window gets hidden too).
 
 ## Not in repo (gitignored)
-`counts.json`, `counts.csv`, `line_*.json` (site-specific), `*.mp4`, `*.pt`, logs.
+`counts.json`, `counts.csv`, `line_*.json` (site-specific), `web_pin.txt`, `recordings/`,
+`*.mp4`, `*.pt`, `*_openvino_model/`, logs.
 Reference clip of last year's crowd: `Downloads/20251107_175906.mp4` on the old laptop
 (1080p60, 36 s) — copy manually if needed.

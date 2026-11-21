@@ -6,3 +6,7 @@ counts.json
 counts.csv
 line_*.json
 __pycache__/
+*_openvino_model/
+recordings/
+web_pin.txt
+counts.tmp

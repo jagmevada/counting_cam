@@ -1,3 +1,7 @@
-opencv-python>=4.10
+# ponytail: pinned - OpenCV 5.x bundled FFmpeg rejects the cameras' self-signed RTSPS cert (0x80090325)
+opencv-python==4.10.0.84
 pillow
 ultralytics
+openvino
+lap
+paho-mqtt
