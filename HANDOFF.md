@@ -80,14 +80,14 @@ undo buttons.
 
 ## Recording video
 ```
-python recorder.py            # both gates, both streams, 15:45 to 23:30 every day
+python recorder.py            # both gates, both streams, 15:45 to 23:59 every day
 ```
 Leave it running: it records in that window each day and waits in between. If the laptop
 or the session it runs in is restarted, start it again.
 ffmpeg copies the cameras' own H.265 video to `recordings/<date>/` with no re-encoding
 (almost no CPU): `gateN_sub_<time>.mkv` (720p, exactly what the counter sees) and
 `gateN_main_<time>.mkv` (2560x1440), a new file every 10 minutes. About 3.6 GB per hour
-in total, about 28 GB a day. It restarts a dropped stream, and ends for good when the disk
+in total, about 29 GB a day. It restarts a dropped stream, and ends for good when the disk
 has less than 20 GB free. Replay a file through the counter:
 `python counter.py <file.mkv> --nogui --line x1,y1,x2,y2,ix,iy`.
 `recordings/2026-11-21/early_tests/` holds the short clips the numbers below came from.

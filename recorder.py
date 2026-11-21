@@ -1,6 +1,6 @@
 """Record both gates' camera video, for training data and for replaying the counter.
 
-    python recorder.py                    both gates, both streams, 15:45 to 23:30 every day
+    python recorder.py                    both gates, both streams, 15:45 to 23:59 every day
     python recorder.py --start 16:30 --until 22:00 --streams 1
 
 Leave it running: it records between --start and --until each day and waits in between.
@@ -8,8 +8,8 @@ ffmpeg copies the cameras' own H.265 video straight to disk (no re-encoding, alm
 a new .mkv per gate and stream every 10 minutes, named by its start time:
     recordings/<date>/gate1_sub_<HHMMSS>.mkv     1280x720, exactly what the counter sees
     recordings/<date>/gate1_main_<HHMMSS>.mkv    2560x1440
-About 3.6 GB per hour for both gates with both streams (measured 2026-11-21), so about 28 GB
-for a 15:45 to 23:30 day. It ends for good when the disk has less than --min-free GB left;
+About 3.5 GB per hour for both gates with both streams (measured 2026-11-21), so about 29 GB
+for a 15:45 to 23:59 day. It ends for good when the disk has less than --min-free GB left;
 Ctrl+C stops it earlier. A stream that drops is restarted within 5 s.
 Replay a file: python counter.py <file.mkv> --nogui --line x1,y1,x2,y2,ix,iy
 """
@@ -78,7 +78,9 @@ def record(out, end, args):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--start", default="15:45", help="start time each day, HH:MM")
-    ap.add_argument("--until", default="23:30", help="stop time each day, HH:MM")
+    # ponytail: one window per calendar day, so a show that runs past midnight is cut at 23:59. If that
+    # happens, run a second recorder with --start 00:00 --until 01:00.
+    ap.add_argument("--until", default="23:59", help="stop time each day, HH:MM")
     ap.add_argument("--streams", default="1,0", help="1 = sub (720p), 0 = main (1440p)")
     ap.add_argument("--minutes", type=int, default=10, help="length of each file")
     ap.add_argument("--min-free", type=float, default=20, help="end when the disk has fewer GB free")
