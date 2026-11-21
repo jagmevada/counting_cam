@@ -212,7 +212,7 @@ Read the status text above each tile:
 |---|---|---|
 | `idle` | no password → never connected | type it + Connect, or `setx CAM_PASS "..."` then **reopen** the viewer (setx only affects programs started after it) |
 | stuck `connecting...` | PC can't reach camera | `ping 192.168.1.251`; fix Ethernet IP/routes (Network setup above) |
-| `cannot open stream (check login)` | wrong password / old OpenCV | check password; `pip install -U opencv-python` |
+| `cannot open stream (check login)` | wrong password, or OpenCV 5.x (it rejects the cameras' certificate) | check password; `pip install opencv-python==4.10.0.84`. Do **not** upgrade to 5.x |
 | one tile missing / off-screen | old layout bug (fixed in this repo) | `git pull` |
 
 Start the viewer with `pythonw camviewer.py` (don't launch it with a hidden window style —
