@@ -1,0 +1,8 @@
+*.mp4
+*.pt
+*.log
+*.out
+counts.json
+counts.csv
+line_*.json
+__pycache__/
