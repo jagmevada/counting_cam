@@ -452,6 +452,7 @@ def web(args):
                    "gates": {g.label: [g.n_in, g.n_out] for g in gates},
                    "since": {g.label: g.start for g in gates}, "cams": {g.label: g.name for g in gates},
                    "no_video": [g.label for g in gates if not g.done and time.time() - g.seen > 5],
+                   "battery": battery(),
                    "log": numbered(), "nonce": nonce[0], "inside": show_now(),
                    # gates still counting for the show that ended -> when they reset themselves
                    "pending": {g.label: time.strftime("%H:%M:%S", time.gmtime(sod(g.mark[2]) + SHOW_WINDOW))
@@ -497,6 +498,17 @@ def web(args):
     c.loop_start()  # its own thread, reconnects by itself
     print("phone page link started, reset PIN is in", PIN_FILE.name, flush=True)
     return publish
+
+
+def battery():
+    """Battery percent while the laptop runs on battery; None on mains (or when Windows can't tell)."""
+    class Power(ctypes.Structure):  # SYSTEM_POWER_STATUS
+        _fields_ = [("ac", ctypes.c_ubyte), ("flag", ctypes.c_ubyte), ("pct", ctypes.c_ubyte),
+                    ("saver", ctypes.c_ubyte), ("life", ctypes.c_ulong), ("full", ctypes.c_ulong)]
+    p = Power()
+    if os.name != "nt" or not ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(p)) or p.ac != 0:
+        return None
+    return p.pct if p.pct <= 100 else None
 
 
 def other_counters():
@@ -568,6 +580,11 @@ def main():
                          "from its numbers: under a second without counting instead of about 13")
     args = ap.parse_args()
     args.weights, args.size = weights(args)
+    if os.name == "nt" and all(is_ip(s) for s in args.sources):
+        # A sleeping laptop counts nobody. On battery Windows sleeps after 15 idle minutes: on 2026-11-21 the
+        # charger came out and it slept 3 minutes into a rush. ES_CONTINUOUS | ES_SYSTEM_REQUIRED |
+        # ES_DISPLAY_REQUIRED keeps the laptop and its screen on for as long as this program runs.
+        ctypes.windll.kernel32.SetThreadExecutionState(0x80000003)
 
     global LIVE, LATE_FRAMES
     if args.no_late:

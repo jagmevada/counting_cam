@@ -23,6 +23,15 @@ Opens the "Dome entry counter" window: both gates, the count line, and a header 
 places and red at house full. `NO VIDEO: Gate n - NOT COUNTING` in red means that feed
 has stopped for 5 s.
 
+- **Keep the laptop on its charger.** On 2026-11-21 the charger came out at about 22:10;
+  on battery Windows sleeps after 15 idle minutes, and the laptop slept from 22:30:36 to
+  22:33:38, three minutes into a rush: nothing was counted or recorded, and that show's
+  count is short by several hundred. The counter now asks Windows to stay awake while it
+  runs, and the phone page shows a red line while the laptop is on battery. Windows' own
+  setting was not changed (Settings > System > Power & battery > Screen, sleep &
+  hibernate timeouts: "On battery" is 15 minutes, "Plugged in" is never). A battery lasts
+  about 2.5 hours under this load.
+
 - **Before each show's entry: reset.** The two gates work independently, so each has its
   own reset: the "Reset" button beside the gate on the phone page, or `1` / `2` then `y` in
   the window (click it first). "Reset both gates" on the page, or `r` then `y`, is the

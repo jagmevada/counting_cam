@@ -218,8 +218,11 @@ function render() {
     rows[g].io.textContent = "in " + fmt(i) + ", out " + fmt(o);
   });
   $("btnReset").textContent = names.length === 2 ? "Reset both gates" : "Reset all gates";
-  $("warn").hidden = !st.no_video.length;
-  $("warn").textContent = st.no_video.length ? "NO VIDEO at " + st.no_video.join(", ") + ": not counting there" : "";
+  const warns = [];
+  if (st.no_video.length) warns.push("NO VIDEO at " + st.no_video.join(", ") + ": not counting there");
+  if (st.battery != null) warns.push("Counter laptop is on battery (" + st.battery + "%): plug in its charger");
+  $("warn").hidden = !warns.length;
+  $("warn").textContent = warns.join(". ");
   const log = st.log || [];
   $("btnUndo").hidden = !log.length;
 
