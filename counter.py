@@ -11,9 +11,12 @@ the line, then 1 point on the INSIDE (dome) side.
 Keys: r then y = reset all gates for the next show, 1 or 2 then y = reset only that gate,
 u then y = undo the last reset, l = redraw line, q = quit. The same resets and undo are on
 the phone page (see WEB_HOST below).
-Each gate runs its own shows: one show = from one reset of that gate to the next. counts.json
-keeps the running shows, today's finished ones and the finished days, so nothing is lost on
-a restart. counts.csv gets a row per gate
+Each gate is reset by its own volunteer when it starts admitting the next show, so the gates'
+resets come a few minutes apart. Resets within SHOW_WINDOW of each other start the same show:
+until a gate is reset, its count stays with the show that just ended, and a gate nobody resets
+in that time is reset automatically, dated back to the other gate's reset.
+counts.json keeps the running counts, today's finished ones and the finished days, so nothing
+is lost on a restart. counts.csv gets a row per gate
 every minute and at every reset (= that show's final count).
 """
 import argparse
@@ -50,6 +53,9 @@ WIN = "Dome entry counter"
 MARGIN = 0.015
 OUT_MARGIN = 0.125
 EVENT_START, EVENT_DAYS = "2026-11-19", 7  # 2026-11-21 was day 3
+# ponytail: seconds. The owner's figure: the two gates are reset less than 4 minutes apart, and a
+# show lasts about 30 minutes entry to entry. Must stay well under the gap between shows.
+SHOW_WINDOW = 240
 # Phone page (index.html on the gh-pages branch): the numbers go out and the reset / undo
 # commands come in through a free public MQTT broker, nothing else leaves the laptop.
 # --no-web turns it off; counting never depends on it. The PIN in web_pin.txt keeps casual
@@ -67,6 +73,12 @@ def today():
 
 def clock():
     return time.strftime("%H:%M:%S")
+
+
+def sod(hms):
+    """Seconds since midnight of an HH:MM:SS string."""
+    h, m, sec = map(int, hms.split(":"))
+    return h * 3600 + m * 60 + sec
 
 
 def cam_pass():
@@ -111,7 +123,10 @@ class Gate:
                     f"?channel=1&subtype={args.subtype}") if self.live else src
         t = totals.get(self.name, {})
         self.n_in, self.n_out = t.get("in", 0), t.get("out", 0)
-        self.start = t.get("start") or clock()  # when this gate's running show began
+        self.start = t.get("start") or clock()  # when this gate's running count began
+        # [in, out, time, press number]: this gate's count at the moment another gate started the next
+        # show. Set while this gate waits for its own reset, else None.
+        self.mark = t.get("mark")
         self.line_file = HERE / f"line_{self.name}.json"
         self.line = json.loads(self.line_file.read_text()) if self.line_file.exists() else None
         if args.line:
@@ -217,6 +232,22 @@ def inside_now():
     return sum(g.n_in - g.n_out for g in gates)
 
 
+def show_now():
+    """People counted for the show now being admitted. A gate still waiting for its reset adds nothing yet."""
+    return sum(g.n_in - g.n_out for g in gates if not g.mark)
+
+
+def numbered():
+    """Today's finished entries with a show number: resets within SHOW_WINDOW of each other close the same show."""
+    out, k, first, seen = [], 0, None, set()
+    for e in state["shows"]:
+        if first is None or sod(e["end"]) - first > SHOW_WINDOW or e["gate"] in seen:
+            k, first, seen = k + 1, sod(e["end"]), set()
+        seen.add(e["gate"])
+        out.append({**e, "show": k})
+    return out
+
+
 def today_total():
     return sum(s["in"] - s["out"] for s in state["shows"]) + inside_now()
 
@@ -250,14 +281,15 @@ def save_state():
     with lock:
         try:  # write then swap, so a crash or power cut cannot leave half a file
             tmp = COUNTS.with_suffix(".tmp")
-            tmp.write_text(json.dumps({**state, "gates": {g.name: {"in": g.n_in, "out": g.n_out, "start": g.start}
-                                                          for g in gates}}))
+            tmp.write_text(json.dumps({**state, "gates": {
+                g.name: {"in": g.n_in, "out": g.n_out, "start": g.start, "mark": g.mark} for g in gates}}))
             tmp.replace(COUNTS)
         except OSError as e:  # file busy: skip this save, the next count saves again. Never stop counting.
             print("could not save counts.json:", e, flush=True)
 
 
-def log_counts(note="", gs=None):
+def log_counts(note="", gs=None, counts=None):
+    """One row per gate (all, or gs) with its running count, or with `counts` = (in, out) instead."""
     if not LIVE:
         return
     with lock:
@@ -268,7 +300,7 @@ def log_counts(note="", gs=None):
                 if new:
                     w.writerow(["time", "gate", "in", "out", "note"])
                 for g in gates if gs is None else gs:
-                    w.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), g.label, g.n_in, g.n_out, note])
+                    w.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), g.label, *(counts or (g.n_in, g.n_out)), note])
         except OSError as e:  # counts.csv open in Excel is locked: lose the row, never stop counting
             print("could not write counts.csv:", e, flush=True)
 
@@ -278,31 +310,60 @@ def reset(gs=None, note="show end"):
     today's list, then that gate counts from zero. The day totals keep everything."""
     with lock:
         gs = gates if gs is None else gs
+        now = clock()
         filed = [g for g in gs if g.n_in or g.n_out]
-        act = max((s["act"] for s in state["shows"]), default=0) + 1  # one number per press, for undo
+        act = last_act() + 1  # one number per press, for undo
         for g in filed:
-            state["shows"].append({"gate": g.label, "start": g.start, "end": clock(),
+            state["shows"].append({"gate": g.label, "start": g.start, "end": now,
                                    "in": g.n_in, "out": g.n_out, "act": act})
         if filed:
             log_counts(note, filed)
         for g in gs:
             g.n_in = g.n_out = 0
             g.counted.clear()
-            g.start = clock()
+            g.start, g.mark = now, None
+        # The other gates now have SHOW_WINDOW to be reset for the same show. Until then their count
+        # stays with the show that just ended; settle() closes it for them if nobody does.
+        for o in gates:
+            if o not in gs and not o.mark and sod(now) - sod(o.start) > SHOW_WINDOW:
+                o.mark = [o.n_in, o.n_out, now, act]
         save_state()
 
 
-def undo_reset():
-    """Takes back the last reset press (one gate or all): those shows are reopened and keep counting."""
+def last_act():
+    return max([e["act"] for e in state["shows"]] + [g.mark[3] for g in gates if g.mark], default=0)
+
+
+def settle():
+    """A gate nobody reset within SHOW_WINDOW of another gate's reset is reset here, dated back to that
+    reset: its count up to then is filed with the show that ended, the rest stays as the new show's."""
     with lock:
-        if not state["shows"]:
+        for g in gates:
+            if g.mark and sod(clock()) - sod(g.mark[2]) > SHOW_WINDOW:
+                a, b, at, act = g.mark
+                state["shows"].append({"gate": g.label, "start": g.start, "end": at, "in": a, "out": b,
+                                       "act": act, "auto": True})
+                log_counts(f"show end (auto: not reset within {SHOW_WINDOW // 60} min, dated {at})", [g], (a, b))
+                g.n_in, g.n_out, g.start, g.mark = g.n_in - a, g.n_out - b, at, None
+                print(clock(), g.label, "reset automatically, dated", at, flush=True)
+                save_state()
+
+
+def undo_reset():
+    """Takes back the last reset press (one gate or all, and any automatic reset it led to): those
+    counts are reopened and keep counting."""
+    with lock:
+        act = last_act()
+        if not act:
             return False
-        act = state["shows"][-1]["act"]
         while state["shows"] and state["shows"][-1]["act"] == act:
-            s = state["shows"].pop()
+            e = state["shows"].pop()
             for g in gates:
-                if g.label == s["gate"]:
-                    g.n_in, g.n_out, g.start = g.n_in + s["in"], g.n_out + s["out"], s["start"]
+                if g.label == e["gate"]:
+                    g.n_in, g.n_out, g.start = g.n_in + e["in"], g.n_out + e["out"], e["start"]
+        for g in gates:
+            if g.mark and g.mark[3] == act:
+                g.mark = None
         log_counts("reset undone")
         save_state()
         return True
@@ -335,7 +396,10 @@ def web(args):
                    "gates": {g.label: [g.n_in, g.n_out] for g in gates},
                    "since": {g.label: g.start for g in gates}, "cams": {g.label: g.name for g in gates},
                    "no_video": [g.label for g in gates if not g.done and time.time() - g.seen > 5],
-                   "log": state["shows"], "nonce": nonce[0],
+                   "log": numbered(), "nonce": nonce[0], "inside": show_now(),
+                   # gates still counting for the show that ended -> when they reset themselves
+                   "pending": {g.label: time.strftime("%H:%M:%S", time.gmtime(sod(g.mark[2]) + SHOW_WINDOW))
+                               for g in gates if g.mark},
                    # these two only keep a phone's cached copy of the first page version working
                    "shows": [], "show_start": min(g.start for g in gates),
                    "days": [[d, today_total() if d == state["date"] else state["days"].get(d)] for d in days]}
@@ -488,6 +552,7 @@ def main():
             for g in gates:
                 t = totals.get(g.name, {})
                 g.n_in, g.n_out, g.start = t.get("in", 0), t.get("out", 0), t.get("start") or clock()
+                g.mark = t.get("mark")
                 g.counted.clear()
         print(clock(), "took over from", old, flush=True)
 
@@ -510,6 +575,7 @@ def main():
             log_counts()
             if state["date"] != today():
                 new_day()
+        settle()
         if publish and time.time() - last_pub >= 2:
             last_pub = time.time()
             try:
@@ -517,8 +583,6 @@ def main():
             except Exception as e:
                 print("phone page off:", e, flush=True)
                 publish = None
-        total_in = sum(g.n_in for g in gates)
-        total_out = sum(g.n_out for g in gates)
         if args.nogui:
             time.sleep(0.2)
             continue
@@ -527,8 +591,9 @@ def main():
                            cv2.resize(g.view, (int(g.view.shape[1] * h / g.view.shape[0]), h)) for g in gates])
         banner = row[:150].copy()
         banner[:] = (20, 20, 20)
-        # inside = in - out: staff walking in and out cancel, only people who stay count
-        inside = total_in - total_out
+        # inside = in - out: staff walking in and out cancel, only people who stay count.
+        # A gate still waiting for its reset is left out: its count belongs to the show that ended.
+        inside = show_now()
         left = args.capacity - inside
         colour = (0, 0, 255) if left <= 0 else (0, 165, 255) if left <= args.capacity // 10 else (0, 255, 0)
         status = "HOUSE FULL" if left <= 0 else f"{left} left"
@@ -541,9 +606,9 @@ def main():
         s = row.shape[1] / 1200
         cv2.putText(banner, f"INSIDE {inside} / {args.capacity}   {status}",
                     (20, 62), cv2.FONT_HERSHEY_SIMPLEX, s, colour, 4)
-        per_gate = "    ".join(f"{g.label}: {g.n_in - g.n_out} (in {g.n_in}, out {g.n_out})" for g in gates)
-        cv2.putText(banner, f"{per_gate}    TOTAL: {inside} (in {total_in}, out {total_out})"
-                            f"    TODAY: {today_total()}",
+        per_gate = "    ".join(f"{g.label}: {g.n_in - g.n_out} (in {g.n_in}, out {g.n_out})"
+                               + (" LAST SHOW, RESET DUE" if g.mark else "") for g in gates)
+        cv2.putText(banner, f"{per_gate}    THIS SHOW: {inside}    TODAY: {today_total()}",
                     (20, 125), cv2.FONT_HERSHEY_SIMPLEX, s * 0.55, (255, 255, 255), 2)
         cv2.imshow(WIN, cv2.vconcat([banner, row]))
         k = cv2.waitKey(30) & 0xFF

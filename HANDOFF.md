@@ -28,6 +28,14 @@ has stopped for 5 s.
   the window (click it first). "Reset both gates" on the page, or `r` then `y`, is the
   master reset. A reset files that gate's finished count in today's list and in
   `counts.csv` and starts it from 0. The day and event totals are not reset.
+- **The 4-minute show window** (`SHOW_WINDOW` in `counter.py`). Each volunteer resets their
+  own gate when they start admitting the next show, so the two resets come up to 4 minutes
+  apart; a show is about 30 minutes entry to entry. Resets within 4 minutes of each other
+  start the same show. After the first gate is reset, the other gate's count still belongs
+  to the show that ended and is left out of `INSIDE` until it is reset too. A gate nobody
+  resets within 4 minutes is reset automatically, dated back to the first gate's reset:
+  its count up to that moment is filed with the old show and the rest counts for the new
+  one. Today's list shows one row per show.
 - Reset by mistake: "Undo last reset" on the page, or `u` then `y`. It takes back the last
   press (one gate or both); the count is reopened with whatever was counted since.
 - `l` redraw a line, `q` quit. Everything survives a restart (`counts.json`).

@@ -42,6 +42,8 @@
   .gate .num { text-align: right; }
   .gate .num b { font-size: 1.5rem; }
   .gate small { display: block; color: var(--muted); font-size: .78rem; font-weight: 400; }
+  .gate small.due { color: var(--warn); font-weight: 600; }
+  .gate .num b.old { color: var(--muted); }
   .warn { color: var(--bad); font-weight: 600; margin: 8px 0; }
   .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
   button { font: inherit; font-weight: 600; min-height: 52px; padding: 0 18px; border-radius: 12px;
@@ -76,7 +78,7 @@
 </header>
 <main>
   <section class="card" aria-labelledby="lblShow">
-    <p class="label" id="lblShow">Inside now (all gates)</p>
+    <p class="label" id="lblShow">Inside now (this show)</p>
     <p class="big"><span id="inside">–</span><span class="cap"> / <span id="cap">–</span></span></p>
     <p class="left" id="left">&nbsp;</p>
     <div class="gates" id="gates"></div>
@@ -91,6 +93,7 @@
     <h2 id="lblToday">Today</h2>
     <p class="total"><span id="today">–</span> <small>people so far</small></p>
     <div class="scroll"><table id="shows"></table></div>
+    <p class="muted" id="note" hidden>* still counting for that show until its gate is reset.</p>
   </section>
 
   <section class="card" aria-labelledby="lblEvent">
@@ -181,7 +184,8 @@ function buildGates(names) {
 function render() {
   if (!st) return;
   const names = Object.keys(st.gates);
-  const inside = names.reduce((a, g) => a + net(g), 0);
+  const pending = st.pending || {};   // gates still counting for the show that ended -> when they reset themselves
+  const inside = st.inside != null ? st.inside : names.reduce((a, g) => a + net(g), 0);
   const left = st.capacity - inside;
   const cls = left <= 0 ? "s-bad" : left <= st.capacity / 10 ? "s-warn" : "s-ok";
   $("inside").textContent = fmt(inside);
@@ -194,8 +198,11 @@ function render() {
   names.forEach(g => {
     const [i, o] = st.gates[g];
     rows[g].cam.textContent = st.cams && st.cams[g] ? "camera " + st.cams[g] : "";
-    rows[g].meta.textContent = "counting since " + since(g);
+    rows[g].meta.textContent = pending[g] ? "last show's count. Resets itself at " + hm(pending[g])
+                                          : "counting since " + since(g);
+    rows[g].meta.className = pending[g] ? "due" : "";
     rows[g].n.textContent = fmt(i - o);
+    rows[g].n.className = pending[g] ? "old" : "";
     rows[g].io.textContent = "in " + fmt(i) + ", out " + fmt(o);
   });
   $("btnReset").textContent = names.length === 2 ? "Reset both gates" : "Reset all gates";
@@ -204,15 +211,28 @@ function render() {
   const log = st.log || [];
   $("btnUndo").hidden = !log.length;
 
+  // One row per show. Gates are reset a few minutes apart; the laptop numbers the shows.
   const shows = $("shows");
-  shows.replaceChildren(head(["Gate", "Time", "In", "Out", "People"]));
-  names.forEach(g => {
-    const [i, o] = st.gates[g];
-    shows.appendChild(row([g, since(g) + " – now", fmt(i), fmt(o), fmt(i - o)], "now"));
+  shows.replaceChildren(head(["Show", "Time", ...names, "Total"]));
+  const cur = (log.length ? log[log.length - 1].show : 0) + 1;
+  const started = names.filter(g => !pending[g]).map(g => since(g)).sort()[0] || "";
+  shows.appendChild(row([String(cur), started + " – now", ...names.map(g => pending[g] ? "–" : fmt(net(g))),
+                         fmt(inside)], "now"));
+  const byShow = new Map();
+  log.forEach(e => { if (!byShow.has(e.show)) byShow.set(e.show, []); byShow.get(e.show).push(e); });
+  [...byShow.keys()].sort((a, b) => b - a).forEach(k => {
+    const es = byShow.get(k);
+    let total = 0, open = false;
+    const cells = names.map(g => {
+      const e = es.find(x => x.gate === g);
+      if (e) { total += e.in - e.out; return fmt(e.in - e.out); }
+      if (k === cur - 1 && pending[g]) { total += net(g); open = true; return fmt(net(g)) + "*"; }
+      return "–";
+    });
+    const from = es.map(e => e.start).sort()[0], to = es.map(e => e.end).sort().pop();
+    shows.appendChild(row([String(k), hm(from) + " – " + hm(to), ...cells, fmt(total) + (open ? "*" : "")]));
   });
-  log.slice().reverse().forEach(s => {
-    shows.appendChild(row([s.gate, hm(s.start) + " – " + hm(s.end), fmt(s.in), fmt(s.out), fmt(s.in - s.out)]));
-  });
+  $("note").hidden = !Object.keys(pending).length;
 
   const days = $("days");
   days.replaceChildren(head(["Day", "Date", "People"]));
@@ -267,8 +287,9 @@ function ask(which, gate) {
   } else if (target) {
     const others = names.filter(g => g !== target);
     $("dlgTitle").textContent = "Reset " + target + " for its next show?";
-    $("dlgText").textContent = target + "'s count (" + fmt(net(target)) + ") is saved in today's list, then " + target +
-      " starts again from 0." + (others.length ? " " + others.join(" and ") + " is not touched." : "");
+    $("dlgText").textContent = target + "'s count (" + fmt(net(target)) + ") is saved with the show that just ended, and " +
+      target + " starts the next show from 0." + (others.length ? " Reset " + others.join(" and ") +
+      " within 4 minutes for the same show; a gate left alone resets itself after that." : "");
   } else {
     $("dlgTitle").textContent = "Reset " + (names.length === 2 ? "both" : "all") + " gates for the next show?";
     $("dlgText").textContent = "Every gate's count (" + names.map(g => g + ": " + fmt(net(g))).join(", ") +
