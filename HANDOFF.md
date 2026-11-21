@@ -83,6 +83,28 @@ Python 3.11+ (tested on 3.13). `yolo11s.pt` downloads automatically on first run
    (`counter.py`, the `ponytail:` comment in `Gate.run`). Use `--subtype 0` (4MP) on GPU.
 4. Record 5 min of real crowd per gate, manual-count it, compare (target ≥ 90–95%).
 
+## Exact working stream URL (test in VLC: Media → Open Network Stream)
+```
+rtsps://admin:<password>@192.168.1.251:554/video/live?channel=1&subtype=1
+rtsps://admin:<password>@192.168.1.252:554/video/live?channel=1&subtype=1
+```
+- `rtsps` (TLS), not `rtsp`.
+- Any `@` inside the password must be written `%40` in a URL (`@` separates login from IP).
+  The scripts encode this automatically.
+- `subtype=1` = 1280x720 light; `subtype=0` = 4MP.
+
+## Troubleshooting: viewer window blank
+Read the status text above each tile:
+| Status | Cause | Fix |
+|---|---|---|
+| `idle` | no password → never connected | type it + Connect, or `setx CAM_PASS "..."` then **reopen** the viewer (setx only affects programs started after it) |
+| stuck `connecting...` | PC can't reach camera | `ping 192.168.1.251`; fix Ethernet IP/routes (Network setup above) |
+| `cannot open stream (check login)` | wrong password / old OpenCV | check password; `pip install -U opencv-python` |
+| one tile missing / off-screen | old layout bug (fixed in this repo) | `git pull` |
+
+Start the viewer with `pythonw camviewer.py` (don't launch it with a hidden window style —
+the Tk window gets hidden too).
+
 ## Not in repo (gitignored)
 `counts.json`, `counts.csv`, `line_*.json` (site-specific), `*.mp4`, `*.pt`, logs.
 Reference clip of last year's crowd: `Downloads/20251107_175906.mp4` on the old laptop
