@@ -150,12 +150,16 @@ a 2.5 min recording), so its line is not critical.
 - Still do a hand count of 50–100 people at each gate after any change.
 
 ## Open items
-1. **More pixels per person** is the real fix for the rush misses (see Measured): run the
-   detector on the 2560x1440 main stream cropped to the gate lane at a larger input, and
-   check two cameras still reach about 25 fps. Also try ByteTrack's `new_track_thresh` at
-   about 0.15 so low-score children start a track sooner. Test both on the recording first.
-   If that is not enough, the next step is a crowd-trained **head** detector (the
-   recordings are the training data).
+1. **4MP stream** (`--subtype 0 --imgsz 960 --no-late`): tried live on 2026-11-21 from
+   20:15. It held 25 fps on both gates for 37 minutes, then fell to 16-18 fps from 20:52
+   and stayed there (GPU at about 79%, CPU at about 45%; cause not found, the laptop
+   heating up is the likely one), so the counter was switched back at 20:55. The one full
+   show on 4MP counted 1,047 with no hand count to compare. Replayed on the recorded rush
+   it scored about the same as 720p with the seen-late rule (152 against 158, true figure
+   about 156), and with the rule left on it double counted (178). Before trying again:
+   find the slowdown (cooling, power plan, a lighter model such as YOLO26-M at 960) and
+   get a hand count. Also untested: ByteTrack's `new_track_thresh` at about 0.15, and a
+   crowd-trained **head** detector (the recordings are the training data).
 2. After dark: confirm detection still works under the venue lights / camera night mode.
 3. Never run a second GPU job next to the live counter during entry: on 2026-11-21 at
    19:19 a test run plus a reviewer's job dropped the live counter to 0.3 fps for about
