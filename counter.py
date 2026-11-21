@@ -227,7 +227,10 @@ class Gate:
             r = self.track(f)
             self.seen = time.time()
             h, w = f.shape[:2]
-            v = r.plot(labels=False, conf=False, line_width=2)
+            v = r.plot(labels=False, conf=False, line_width=max(2, w // 640))
+            if w > 1280:  # the 4MP stream: shrink the picture for the window so the overlays keep their size
+                v = cv2.resize(v, (1280, 1280 * h // w))
+            vh, vw = v.shape[:2]
             self.n += 1
             if r.boxes.id is not None and self.line:
                 ids = r.boxes.id.int().tolist()
@@ -244,9 +247,9 @@ class Gate:
                     self.last[tid] = (self.n, x / w, y1 / h)
                     # dot: green = counted in, red = inside but never counted, yellow = not in yet
                     dot = (0, 255, 0) if tid in self.counted else (0, 0, 255) if self.sides.get(tid) else (0, 255, 255)
-                    cv2.circle(v, (int(x), int(y1)), 7, dot, -1)
+                    cv2.circle(v, (int(x * vw / w), int(y1 * vh / h)), 7, dot, -1)
             if self.line:
-                a, b, c = [(int(px * w), int(py * h)) for px, py in self.line]
+                a, b, c = [(int(px * vw), int(py * vh)) for px, py in self.line]
                 cv2.line(v, a, b, (0, 255, 255), 3)
                 cv2.putText(v, "IN side", c, cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 3)
             # gate number big, camera address and numbers small under it; dark outline so it reads on any picture
@@ -558,13 +561,17 @@ def main():
     ap.add_argument("--save", help="write annotated video (single file source)")
     ap.add_argument("--nogui", action="store_true")
     ap.add_argument("--no-web", action="store_true", help="don't connect the phone page")
+    ap.add_argument("--no-late", action="store_true",
+                    help="turn the seen-late rule off (with the 4MP stream it double counts: 178 against 152)")
     ap.add_argument("--takeover", action="store_true",
                     help="load and start tracking first, then stop the counter already running and carry on "
                          "from its numbers: under a second without counting instead of about 13")
     args = ap.parse_args()
     args.weights, args.size = weights(args)
 
-    global LIVE
+    global LIVE, LATE_FRAMES
+    if args.no_late:
+        LATE_FRAMES = 0
     if LIVE is None:
         LIVE = all(is_ip(s) for s in args.sources)
     takeover = bool(LIVE and args.takeover)
@@ -592,6 +599,8 @@ def main():
         elif args.save:
             fps = g.cap.get(cv2.CAP_PROP_FPS) or 25
             w, h = int(g.cap.get(3)), int(g.cap.get(4))
+            if w > 1280:  # run() shrinks a 4MP picture before drawing on it
+                w, h = 1280, 1280 * h // w
             writer = cv2.VideoWriter(args.save, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
         threading.Thread(target=g.run, args=(writer if not g.live else None,), daemon=True).start()
 
