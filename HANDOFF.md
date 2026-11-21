@@ -182,7 +182,21 @@ a 2.5 min recording), so its line is not critical.
    heating up is the likely one), so the counter was switched back at 20:55. The one full
    show on 4MP counted 1,047 with no hand count to compare. Replayed on the recorded rush
    it scored about the same as 720p with the seen-late rule (152 against 158, true figure
-   about 156), and with the rule left on it double counted (178). Before trying again:
+   about 156), and with the rule left on it double counted (178).
+   The whole hand-counted clip (gate 1, 18:54, hand count 205, 250 s), people counted in:
+
+   | Setup | In |
+   |---|---|
+   | 720p, plain | 179 |
+   | 720p with the seen-late rule (the running setup) | 214 |
+   | Full resolution at 960, full frame, no rule | 196 |
+   | Full resolution at 960, cropped to x 200-2360, y 110-1440, no rule | 201 |
+   | Full resolution at 960, tighter 16:9 crop (x 205-2253, y 288-1440), no rule | 197 |
+   | Full resolution with the rule on top | 228-237 |
+
+   So full resolution with a crop gets within 2% of the hand count by real detections, but
+   it is not better than the running setup, the crop itself is worth only 2-3%, and the
+   rule must stay off with it. Before trying again:
    find the slowdown (cooling, power plan, a lighter model such as YOLO26-M at 960) and
    get a hand count. Also untested: ByteTrack's `new_track_thresh` at about 0.15, and a
    crowd-trained **head** detector (the recordings are the training data).
