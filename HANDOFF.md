@@ -15,8 +15,19 @@ never miss a person or a walking child; counting a carried infant now and then i
 - **Not yet checked:** peak-hour density (7–10 pm) and after-dark lighting.
 
 ## Run it
+For the event, start the counter and the recorder detached, with no viewer window:
 ```
-python counter.py
+powershell -File start.ps1
+```
+They then keep running when the terminal, or Claude, is closed (on 2026-11-22 a restarted
+Claude session took both down, because they had been started from inside it). The script
+starts whichever of the two is not running; `start.ps1 -Takeover` replaces the running
+counter with the code on disk without a gap. Output goes to `counter.log` and
+`recorder.log`. Stop command: see the top of `start.ps1`.
+
+To watch the video with the count line and the dots:
+```
+python counter.py              # or: python counter.py --takeover, if one is already running
 ```
 Opens the "Dome entry counter" window: both gates, the count line, and a header with
 `INSIDE n / 1000`, per-gate numbers and the total. Header turns orange in the last 100
