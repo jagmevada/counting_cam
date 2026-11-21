@@ -1,26 +1,31 @@
 """Dome entry counter: people crossing a line at each gate, house-full check against capacity.
 
 Live:  python counter.py                    both gates (Gate 1 = .252, Gate 2 = .251)
+       python counter.py --takeover         replace a counter that is already running, with no gap
 Clip:  python counter.py clip.avi --save out.mp4 --line x1,y1,x2,y2,ix,iy [--nogui]
 
 A person is counted when their head (top-centre of their box) crosses the line.
 Lines are stored as fractions of the frame (0-1) in line_<name>.json, so one line fits both
 the sub and the main stream. To draw one: delete the file or press l, click 2 points for
 the line, then 1 point on the INSIDE (dome) side.
-Keys: r then y = reset for the next show, u then y = undo the last reset, l = redraw line,
-q = quit. The same reset and undo are on the phone page (see WEB_HOST below).
-One show = from one reset to the next. counts.json keeps the running show, today's finished
-shows and the finished days, so nothing is lost on a restart. counts.csv gets a row per gate
+Keys: r then y = reset all gates for the next show, 1 or 2 then y = reset only that gate,
+u then y = undo the last reset, l = redraw line, q = quit. The same resets and undo are on
+the phone page (see WEB_HOST below).
+Each gate runs its own shows: one show = from one reset of that gate to the next. counts.json
+keeps the running shows, today's finished ones and the finished days, so nothing is lost on
+a restart. counts.csv gets a row per gate
 every minute and at every reset (= that show's final count).
 """
 import argparse
 import csv
+import ctypes
 import hashlib
 import hmac
 import json
 import math
 import os
 import secrets
+import subprocess
 import threading
 import time
 from datetime import date, timedelta
@@ -53,7 +58,7 @@ WEB_HOST, WEB_PORT, WEB_TOPIC = "broker.emqx.io", 8084, "cnt-1223d72e6c6d8499"
 PIN_FILE = HERE / "web_pin.txt"
 LIVE = None  # True when every source is a camera: only then are the files and the phone page touched
 lock = threading.RLock()  # counts, history and files are used from the gate, window and phone threads
-state = {"date": "", "show_start": "", "shows": [], "days": {}}  # shows = today's finished ones
+state = {"date": "", "shows": [], "days": {}}  # shows = today's finished ones, one entry per gate per reset
 
 
 def today():
@@ -106,6 +111,7 @@ class Gate:
                     f"?channel=1&subtype={args.subtype}") if self.live else src
         t = totals.get(self.name, {})
         self.n_in, self.n_out = t.get("in", 0), t.get("out", 0)
+        self.start = t.get("start") or clock()  # when this gate's running show began
         self.line_file = HERE / f"line_{self.name}.json"
         self.line = json.loads(self.line_file.read_text()) if self.line_file.exists() else None
         if args.line:
@@ -212,7 +218,7 @@ def inside_now():
 
 
 def today_total():
-    return sum(s["people"] for s in state["shows"]) + inside_now()
+    return sum(s["in"] - s["out"] for s in state["shows"]) + inside_now()
 
 
 def load_state():
@@ -224,9 +230,18 @@ def load_state():
             d = json.loads(COUNTS.read_text())
         except (OSError, ValueError) as e:
             print("counts.json unreadable, starting from zero:", e, flush=True)
-    state.update(date=d.get("date", today()), show_start=d.get("show_start", clock()),
-                 shows=d.get("shows", []), days=d.get("days", {}))
-    return d.get("gates") or {k: v for k, v in d.items() if isinstance(v, dict) and "in" in v}
+    shows = []
+    for k, s in enumerate(d.get("shows", []), 1):
+        if "gates" in s:  # entries from 2026-11-21, before each gate had its own reset
+            shows += [{"gate": g, "start": s["start"], "end": s["end"], "in": a, "out": b, "act": k}
+                      for g, (a, b) in s["gates"].items()]
+        else:
+            shows.append(s)
+    state.update(date=d.get("date", today()), shows=shows, days=d.get("days", {}))
+    totals = d.get("gates") or {k: v for k, v in d.items() if isinstance(v, dict) and "in" in v}
+    for t in totals.values():
+        t.setdefault("start", d.get("show_start"))
+    return totals
 
 
 def save_state():
@@ -235,13 +250,14 @@ def save_state():
     with lock:
         try:  # write then swap, so a crash or power cut cannot leave half a file
             tmp = COUNTS.with_suffix(".tmp")
-            tmp.write_text(json.dumps({**state, "gates": {g.name: {"in": g.n_in, "out": g.n_out} for g in gates}}))
+            tmp.write_text(json.dumps({**state, "gates": {g.name: {"in": g.n_in, "out": g.n_out, "start": g.start}
+                                                          for g in gates}}))
             tmp.replace(COUNTS)
         except OSError as e:  # file busy: skip this save, the next count saves again. Never stop counting.
             print("could not save counts.json:", e, flush=True)
 
 
-def log_counts(note=""):
+def log_counts(note="", gs=None):
     if not LIVE:
         return
     with lock:
@@ -251,36 +267,42 @@ def log_counts(note=""):
                 w = csv.writer(fh)
                 if new:
                     w.writerow(["time", "gate", "in", "out", "note"])
-                for g in gates:
+                for g in gates if gs is None else gs:
                     w.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), g.label, g.n_in, g.n_out, note])
         except OSError as e:  # counts.csv open in Excel is locked: lose the row, never stop counting
             print("could not write counts.csv:", e, flush=True)
 
 
-def reset(note="show end"):
-    """Starts a new show: the finished one goes to the log and to today's list, the counts go to zero."""
+def reset(gs=None, note="show end"):
+    """Starts a new show at these gates (None = all): each finished count goes to the log and to
+    today's list, then that gate counts from zero. The day totals keep everything."""
     with lock:
-        if any(g.n_in or g.n_out for g in gates):
-            log_counts(note)
-            state["shows"].append({"start": state["show_start"], "end": clock(), "people": inside_now(),
-                                   "gates": {g.label: [g.n_in, g.n_out] for g in gates}})
-        for g in gates:
+        gs = gates if gs is None else gs
+        filed = [g for g in gs if g.n_in or g.n_out]
+        act = max((s["act"] for s in state["shows"]), default=0) + 1  # one number per press, for undo
+        for g in filed:
+            state["shows"].append({"gate": g.label, "start": g.start, "end": clock(),
+                                   "in": g.n_in, "out": g.n_out, "act": act})
+        if filed:
+            log_counts(note, filed)
+        for g in gs:
             g.n_in = g.n_out = 0
             g.counted.clear()
-        state["show_start"] = clock()
+            g.start = clock()
         save_state()
 
 
 def undo_reset():
-    """Takes back the last reset (pressed by mistake): that show is reopened and keeps counting."""
+    """Takes back the last reset press (one gate or all): those shows are reopened and keep counting."""
     with lock:
         if not state["shows"]:
             return False
-        s = state["shows"].pop()
-        for g in gates:
-            a, b = s["gates"].get(g.label, [0, 0])
-            g.n_in, g.n_out = g.n_in + a, g.n_out + b
-        state["show_start"] = s["start"]
+        act = state["shows"][-1]["act"]
+        while state["shows"] and state["shows"][-1]["act"] == act:
+            s = state["shows"].pop()
+            for g in gates:
+                if g.label == s["gate"]:
+                    g.n_in, g.n_out, g.start = g.n_in + s["in"], g.n_out + s["out"], s["start"]
         log_counts("reset undone")
         save_state()
         return True
@@ -289,8 +311,8 @@ def undo_reset():
 def new_day():
     """The date changed (midnight, or the first start of a day): file the old day's total, start clean."""
     with lock:
-        reset("day end")
-        total = sum(s["people"] for s in state["shows"])
+        reset(note="day end")
+        total = sum(s["in"] - s["out"] for s in state["shows"])
         state["days"][state["date"]] = total
         log_counts(f"day total {state['date']}: {total}")
         state.update(date=today(), shows=[])
@@ -310,29 +332,35 @@ def web(args):
         days = [(first + timedelta(days=i)).isoformat() for i in range(EVENT_DAYS)]
         with lock:
             msg = {"at": clock(), "capacity": args.capacity, "date": state["date"],
-                   "show_start": state["show_start"], "gates": {g.label: [g.n_in, g.n_out] for g in gates},
-                   "cams": {g.label: g.name for g in gates},
+                   "gates": {g.label: [g.n_in, g.n_out] for g in gates},
+                   "since": {g.label: g.start for g in gates}, "cams": {g.label: g.name for g in gates},
                    "no_video": [g.label for g in gates if not g.done and time.time() - g.seen > 5],
-                   "shows": state["shows"], "nonce": nonce[0],
+                   "log": state["shows"], "nonce": nonce[0],
+                   # these two only keep a phone's cached copy of the first page version working
+                   "shows": [], "show_start": min(g.start for g in gates),
                    "days": [[d, today_total() if d == state["date"] else state["days"].get(d)] for d in days]}
         c.publish(WEB_TOPIC + "/status", json.dumps(msg), retain=True)
 
     def on_message(c, _, m):
         try:
             msg = json.loads(m.payload)
-            cmd = msg["cmd"]
-            want = hmac.new(pin.encode(), f"{cmd}|{nonce[0]}".encode(), hashlib.sha256).hexdigest()
+            cmd, gate = msg["cmd"], msg.get("gate")  # no gate = all gates
+            text = f"{cmd}|{gate}|{nonce[0]}" if gate else f"{cmd}|{nonce[0]}"
+            want = hmac.new(pin.encode(), text.encode(), hashlib.sha256).hexdigest()
             ok = cmd in ("reset", "undo") and hmac.compare_digest(want, str(msg["mac"]))
         except (ValueError, KeyError, TypeError):
             return
         if ok:
             nonce[0] = secrets.token_hex(8)
+            gs = [g for g in gates if g.label == gate] if gate else None
             if cmd == "undo":
                 ok = undo_reset()
+            elif gate and not gs:
+                ok = False  # no such gate: never fall back to resetting everything
             else:
-                reset("show end (phone)")
-            print(clock(), "phone:", cmd, "done" if ok else "nothing to undo", flush=True)
-        c.publish(WEB_TOPIC + "/ack", json.dumps({"id": msg.get("id"), "cmd": cmd, "ok": ok}))
+                reset(gs, "show end (phone)")
+            print(clock(), "phone:", cmd, gate or "all gates", "done" if ok else "not done", flush=True)
+        c.publish(WEB_TOPIC + "/ack", json.dumps({"id": msg.get("id"), "cmd": cmd, "gate": gate, "ok": ok}))
         publish()
 
     c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, transport="websockets")
@@ -344,6 +372,25 @@ def web(args):
     c.loop_start()  # its own thread, reconnects by itself
     print("phone page link started, reset PIN is in", PIN_FILE.name, flush=True)
     return publish
+
+
+def other_counters():
+    """Process ids of counter.py runs other than this one (and the launcher that started it)."""
+    ps = ("Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
+          "Where-Object { $_.CommandLine -like '*counter.py*' } | ForEach-Object { $_.ProcessId }")
+    out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True).stdout
+    return [int(x) for x in out.split() if int(x) not in (os.getpid(), os.getppid())]
+
+
+def stop_others(pids):
+    """Ends those processes and waits until each is really gone, so its last save is on disk."""
+    k = ctypes.windll.kernel32
+    for pid in pids:
+        h = k.OpenProcess(0x00100001, False, pid)  # SYNCHRONIZE | PROCESS_TERMINATE
+        if h:
+            k.TerminateProcess(h, 0)
+            k.WaitForSingleObject(h, 5000)
+            k.CloseHandle(h)
 
 
 def pick_line(frame, name):
@@ -389,12 +436,19 @@ def main():
     ap.add_argument("--save", help="write annotated video (single file source)")
     ap.add_argument("--nogui", action="store_true")
     ap.add_argument("--no-web", action="store_true", help="don't connect the phone page")
+    ap.add_argument("--takeover", action="store_true",
+                    help="load and start tracking first, then stop the counter already running and carry on "
+                         "from its numbers: under a second without counting instead of about 13")
     args = ap.parse_args()
     args.weights, args.size = weights(args)
 
     global LIVE
     if LIVE is None:
         LIVE = all(is_ip(s) for s in args.sources)
+    takeover = bool(LIVE and args.takeover)
+    if takeover:
+        old = other_counters()
+        LIVE = False  # until the handover this run only tracks: it touches no file and no phone page
     totals = load_state()
     for s in args.sources:
         g = Gate(s, args, totals)
@@ -418,6 +472,24 @@ def main():
             w, h = int(g.cap.get(3)), int(g.cap.get(4))
             writer = cv2.VideoWriter(args.save, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
         threading.Thread(target=g.run, args=(writer if not g.live else None,), daemon=True).start()
+
+    if takeover:
+        # By now the models are loaded and every gate is tracking, so people about to cross are already
+        # known. If loading had failed, this run would have ended above and the old one would still count.
+        t0 = time.time()
+        while any(g.view is None for g in gates) or time.time() - t0 < 4:
+            if time.time() - t0 > 40:
+                raise SystemExit("takeover abandoned: no picture from every gate. The running counter was left alone.")
+            time.sleep(0.2)
+        stop_others(old)
+        LIVE = True
+        totals = load_state()
+        with lock:
+            for g in gates:
+                t = totals.get(g.name, {})
+                g.n_in, g.n_out, g.start = t.get("in", 0), t.get("out", 0), t.get("start") or clock()
+                g.counted.clear()
+        print(clock(), "took over from", old, flush=True)
 
     if state["date"] != today():
         new_day()
@@ -461,7 +533,8 @@ def main():
         colour = (0, 0, 255) if left <= 0 else (0, 165, 255) if left <= args.capacity // 10 else (0, 255, 0)
         status = "HOUSE FULL" if left <= 0 else f"{left} left"
         if armed:
-            status = "RESET? press y" if armed == "r" else "UNDO LAST RESET? press y"
+            what = "ALL GATES" if armed == "r" else gates[int(armed) - 1].label.upper() if armed.isdigit() else ""
+            status = "UNDO LAST RESET? press y" if armed == "u" else f"RESET {what}? press y"
         stuck = [g.label for g in gates if not g.done and time.time() - g.seen > 5]
         if stuck:  # a frozen picture looks like a quiet gate, so say it loudly
             status, colour = "NO VIDEO: " + ", ".join(stuck) + " - NOT COUNTING", (0, 0, 255)
@@ -476,13 +549,14 @@ def main():
         k = cv2.waitKey(30) & 0xFF
         if k == ord("q"):
             break
-        if k in (ord("r"), ord("u")):  # both need y next, so a stray key can't change the count
+        if k in (ord("r"), ord("u")) or ord("1") <= k < ord("1") + len(gates):
+            # r = all gates, 1 / 2 = that gate, u = undo. All need y next, so a stray key can't change the count.
             armed = chr(k)
         elif k == ord("y") and armed:
-            if armed == "r":
-                reset()
-            else:
+            if armed == "u":
                 undo_reset()
+            else:
+                reset(None if armed == "r" else [gates[int(armed) - 1]])
             armed = ""
         elif k == ord("l"):
             for g in gates:

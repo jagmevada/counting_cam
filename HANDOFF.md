@@ -23,13 +23,18 @@ Opens the "Dome entry counter" window: both gates, the count line, and a header 
 places and red at house full. `NO VIDEO: Gate n - NOT COUNTING` in red means that feed
 has stopped for 5 s.
 
-- **Before each show's entry: reset.** Either the red button on the phone page, or `r`
-  then `y` in the window (click it first). The finished show is filed in today's list and
-  in `counts.csv`, and the count starts from 0. The day and event totals are not reset.
-- Reset by mistake: "Undo last reset" on the page, or `u` then `y`. The show is reopened
-  with whatever was counted since.
+- **Before each show's entry: reset.** The two gates work independently, so each has its
+  own reset: the "Reset" button beside the gate on the phone page, or `1` / `2` then `y` in
+  the window (click it first). "Reset both gates" on the page, or `r` then `y`, is the
+  master reset. A reset files that gate's finished count in today's list and in
+  `counts.csv` and starts it from 0. The day and event totals are not reset.
+- Reset by mistake: "Undo last reset" on the page, or `u` then `y`. It takes back the last
+  press (one gate or both); the count is reopened with whatever was counted since.
 - `l` redraw a line, `q` quit. Everything survives a restart (`counts.json`).
-- Do not restart during entry: nobody is counted for the ~13 s it takes.
+- **To load a new version while people are entering: `python counter.py --takeover`.** It
+  loads and starts tracking first, then stops the running counter and carries on from its
+  numbers, with no gap. If it fails to load, the running counter is left alone. A plain
+  stop and start loses about 13 s of counting.
 - Each picture shows its gate number large, with the camera address and that gate's in /
   out / frame rate small beneath. The header's second line ends with `TODAY: n`.
 - Head dots: yellow = not in yet, green = counted in, red = inside but never counted.
@@ -37,8 +42,9 @@ has stopped for 5 s.
 
 ## Phone page
 https://jagmevada.github.io/counting_cam/ (the `gh-pages` branch; source in `web/index.html`).
-It shows this show, today's shows, each day of the event and the event total, and has the
-reset and undo buttons.
+It shows each gate's running count, today's finished counts (one row per gate per reset),
+each day of the event and the event total, and has the per-gate reset, master reset and
+undo buttons.
 
 - How it connects: GitHub Pages cannot reach the laptop, so `counter.py` publishes the
   numbers every 2 s to a free public MQTT broker (`WEB_HOST`, `WEB_TOPIC` at the top of
