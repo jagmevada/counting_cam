@@ -52,6 +52,15 @@ WIN = "Dome entry counter"
 # Tuned on recordings of gate 2; raise OUT_MARGIN if people waiting inside cause OUT counts.
 MARGIN = 0.015
 OUT_MARGIN = 0.125
+# ponytail: a child hidden behind adults is first seen already past the line, so the line never sees
+# them cross. Such a track counts once it has lasted LATE_FRAMES and moved LATE_DROP further in, unless
+# it starts outside the span of the drawn line (the owner draws it from curtain to curtain, so beyond
+# its ends are people waiting inside), at the picture's edge (someone walking back from inside: x within
+# EDGE of a side, or below LATE_BOTTOM) or within LATE_NEAR of a track that ended in the last LATE_GAP frames (the next piece of
+# a track that broke). Fractions of the frame (30 px, 90 px, 40 px, 60 px at 720p); tuned on the gate 1
+# rush of 2026-11-21 18:54, hand count 205 against 179 without this. Set LATE_FRAMES = 0 to turn it off.
+LATE_FRAMES, LATE_DROP, LATE_GAP, LATE_NEAR, EDGE, LATE_BOTTOM = 8, 0.042, 15, 0.07, 0.03, 0.917
+LATE_WITHIN = 75  # frames: it must walk that far in within 3 s, so someone waiting inside who drifts later does not count
 EVENT_START, EVENT_DAYS = "2026-11-19", 7  # 2026-11-21 was day 3
 # ponytail: seconds. The owner's figure: the two gates are reset less than 4 minutes apart, and a
 # show lasts about 30 minutes entry to entry. Must stay well under the gap between shows.
@@ -100,6 +109,12 @@ def side(line, x, y):
     return ((x2 - x1) * (y - y1) - (y2 - y1) * (x - x1)) / math.hypot(x2 - x1, y2 - y1)
 
 
+def along(line, x, y):
+    """Where (x, y) falls along the drawn line: 0 at its start, 1 at its end."""
+    (x1, y1), (x2, y2) = line[0], line[1]
+    return ((x - x1) * (x2 - x1) + (y - y1) * (y2 - y1)) / ((x2 - x1) ** 2 + (y2 - y1) ** 2)
+
+
 def weights(args):
     """Intel GPU: run the model through OpenVINO, exported once from the .pt (auto-downloads)."""
     if not args.device.startswith(("xpu", "intel")):
@@ -139,6 +154,8 @@ class Gate:
         self.latest, self.view, self.fps, self.done = None, None, 0.0, False
         self.seen = time.time()  # when a frame was last processed, for the NO VIDEO warning
         self.sides, self.counted = {}, set()  # track id -> inside?, ids currently counted in
+        # for the seen-late rule: frame number, each track's last head point, tracks first seen past the line
+        self.n, self.last, self.late = 0, {}, {}
 
     def grab(self):  # live: keep only the newest frame so we never lag behind
         while not self.done:
@@ -158,7 +175,8 @@ class Gate:
         ok, f = self.cap.read()
         return f if ok else None
 
-    def count(self, tid, x, y):
+    def count(self, tid, x, y, gone=()):
+        """gone = head points where tracks ended in the last LATE_GAP frames."""
         d = side(self.line, x, y)
         if side(self.line, *self.line[2]) < 0:
             d = -d  # d > 0 = inside
@@ -166,6 +184,10 @@ class Gate:
         if inside is None:  # first sighting clear of the line fixes the starting side
             if abs(d) >= MARGIN:
                 self.sides[tid] = d > 0
+                if (LATE_FRAMES and d > 0 and EDGE < x < 1 - EDGE and y < LATE_BOTTOM
+                        and 0 <= along(self.line, x, y) <= 1  # only between the line's ends: the gate opening
+                        and not any(math.hypot(px - x, (py - y) * 9 / 16) < LATE_NEAR for px, py in gone)):
+                    self.late[tid] = (self.n, d)  # seen late: may be someone who was hidden until now
             return
         # Every real change of side counts, so in - out stays right for each track.
         with lock:  # a reset from the window or the phone must not land in the middle of this
@@ -175,7 +197,16 @@ class Gate:
             elif inside and d < -OUT_MARGIN:
                 self.n_out += 1
                 self.counted.discard(tid)
+                self.late.pop(tid, None)
             else:
+                born = self.late.get(tid)
+                if born and self.n - born[0] > LATE_WITHIN:
+                    del self.late[tid]  # still about where it appeared: someone waiting, not walking in
+                elif born and self.n - born[0] >= LATE_FRAMES and d - born[1] >= LATE_DROP:
+                    del self.late[tid]  # it has kept walking in: count it, once
+                    self.n_in += 1
+                    self.counted.add(tid)
+                    save_state()
                 return
             self.sides[tid] = not inside
             save_state()
@@ -197,12 +228,20 @@ class Gate:
             self.seen = time.time()
             h, w = f.shape[:2]
             v = r.plot(labels=False, conf=False, line_width=2)
+            self.n += 1
             if r.boxes.id is not None and self.line:
-                for (x1, y1, x2, y2), tid in zip(r.boxes.xyxy.tolist(), r.boxes.id.int().tolist()):
+                ids = r.boxes.id.int().tolist()
+                now = set(ids)
+                # tracks that just ended on the inside. One that ended still outside does not block the
+                # seen-late rule: its person crossed while untracked and reappears uncounted.
+                gone = [(px, py) for t, (n_seen, px, py) in self.last.items()
+                        if t not in now and self.n - n_seen <= LATE_GAP and self.sides.get(t) is not False]
+                for (x1, y1, x2, y2), tid in zip(r.boxes.xyxy.tolist(), ids):
                     # Head, not body centre: from these steep cameras the head stays visible in a
                     # crowd, and it reaches the line when the person is nearest and least hidden.
                     x = (x1 + x2) / 2
-                    self.count(tid, x / w, y1 / h)
+                    self.count(tid, x / w, y1 / h, gone)
+                    self.last[tid] = (self.n, x / w, y1 / h)
                     # dot: green = counted in, red = inside but never counted, yellow = not in yet
                     dot = (0, 255, 0) if tid in self.counted else (0, 0, 255) if self.sides.get(tid) else (0, 255, 255)
                     cv2.circle(v, (int(x), int(y1)), 7, dot, -1)
@@ -220,6 +259,8 @@ class Gate:
                 writer.write(v)
             n += 1
             if time.time() - t0 >= 2:
+                self.last = {t: v for t, v in self.last.items() if self.n - v[0] <= LATE_GAP}  # forget old tracks
+                self.late = {t: v for t, v in self.late.items() if t in self.last}
                 self.fps, n, t0 = n / (time.time() - t0), 0, time.time()
                 print(f"{self.label} ({self.name}): in={self.n_in} out={self.n_out} fps={self.fps:.1f}", flush=True)
         self.done = True

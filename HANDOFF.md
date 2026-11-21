@@ -87,6 +87,12 @@ than 20 GB free. Start it again each day. Replay a file through the counter:
 - Hysteresis (`MARGIN`, `OUT_MARGIN` at the top of `counter.py`): IN once the head is
   11 px past the line, OUT only when it is 90 px back. Pausing on the line does not count.
 - `INSIDE` = in − out, so staff walking in and out cancel.
+- **Seen-late rule** (`LATE_*` at the top of `counter.py`). In a dense rush a child, or a
+  short adult, hidden behind the people in front is first detected already past the line and
+  would never count. Such a track counts once it has lasted 8 frames and walked 30 px further
+  in within 3 s, unless it starts outside the drawn line's ends, at the picture's edge, or
+  within 90 px of a track that ended inside in the last 15 frames (a track that broke).
+  `LATE_FRAMES = 0` turns it off.
 - Walking children must count. Carried infants are sometimes detected and counted, which
   the owner accepts.
 
@@ -123,17 +129,34 @@ a 2.5 min recording), so its line is not critical.
 - Tracker check, gate 1, 2.5 min: library default tracker 61 in, ByteTrack 67 in. Of the
   6 extra, 5 were real people (4 of them children in a group) and 1 was a child counted
   twice. So expect ByteTrack to run about 1–2% high, not low.
-- No full hand count has been compared yet. Do one: count 50–100 people at a gate with a
-  clicker and compare with that gate's `in`.
+- **Hand count, gate 1, night rush 2026-11-21 18:54–18:58** (about 100 people a minute):
+  owner counted 205, the counter showed about 175 (in 179, out 8 on the recording). So the
+  daytime tuning missed about 15% in a dense burst. Light was fine (bright, colour).
+- Three reviews of that recording (`recordings/2026-11-21/gate1_sub_185000.mkv` from 230 s):
+  - Of 24 uncounted tracks past the line viewed one by one: 13 real people never counted
+    (6 children, 7 short or bent adults), 6 new ids on people already counted, 3 people
+    standing inside, 2 unclear.
+  - The misses are mostly a detection limit, not true invisibility: in 5 dense frames a
+    person could see 18 children above the line; the live tracks held 6, the same model at
+    1280 px on the 2560x1440 stream found 17. A bigger model at the same resolution did not
+    help. Hidden children often score 0.1–0.3, under ByteTrack's 0.25 for a new track.
+  - The seen-late rule on the recorded tracks: 179 becomes 214 in (206 in − out), against
+    the hand count of 205–210. Viewed one by one, 10 of 14 additions were real, 2 unclear,
+    2 double counts; so it over-adds a little, which the owner prefers to missing people.
+    On the daytime recordings it adds 0–4 per clip.
+- Still do a hand count of 50–100 people at each gate after any change.
 
 ## Open items
-1. Peak-hour check (7–10 pm): hand-count 5 min per gate from `recordings/` and compare.
-   If dense flow is missed, the next step is a crowd-trained **head** detector (the
+1. **More pixels per person** is the real fix for the rush misses (see Measured): run the
+   detector on the 2560x1440 main stream cropped to the gate lane at a larger input, and
+   check two cameras still reach about 25 fps. Also try ByteTrack's `new_track_thresh` at
+   about 0.15 so low-score children start a track sooner. Test both on the recording first.
+   If that is not enough, the next step is a crowd-trained **head** detector (the
    recordings are the training data).
 2. After dark: confirm detection still works under the venue lights / camera night mode.
-3. Region of interest (owner's idea): crop each frame to the gate area before detection,
-   so the same 640 px model sees people about a third larger. Likely to help with small
-   children. Test on recordings first; not built.
+3. Never run a second GPU job next to the live counter during entry: on 2026-11-21 at
+   19:19 a test run plus a reviewer's job dropped the live counter to 0.3 fps for about
+   20 s. Replay recorded tracks through the counting code on the CPU instead (no video).
 4. Gate 2's line 30 px lower counted 3% more in testing (table above). With the owner's
    "never miss a child" rule this is worth re-offering.
 5. A start-up stall happened once (both gates froze after loading). Models now load one
