@@ -23,7 +23,7 @@ from urllib.parse import quote
 
 # ponytail: reusing counter's camera list and password lookup also loads torch (~0.5 GB RAM
 # for this process). Move them to a small shared module if that ever matters.
-from counter import CAMERAS, HERE, cam_pass
+from counter import CAMERAS, HERE, cam_pass, log_to
 
 
 def record(out, end, args):
@@ -85,7 +85,10 @@ def main():
     ap.add_argument("--minutes", type=int, default=10, help="length of each file")
     ap.add_argument("--min-free", type=float, default=20, help="end when the disk has fewer GB free")
     ap.add_argument("--out", default=str(HERE / "recordings"))
+    ap.add_argument("--log", help="append all output to this file (instead of a shell redirect)")
     args = ap.parse_args()
+    if args.log:
+        log_to(args.log)
     start, until = (datetime.strptime(t, "%H:%M").time() for t in (args.start, args.until))
     try:
         while True:

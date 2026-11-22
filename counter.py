@@ -29,6 +29,7 @@ import math
 import os
 import secrets
 import subprocess
+import sys
 import threading
 import time
 from datetime import date, timedelta
@@ -93,6 +94,16 @@ def sod(hms):
     """Seconds since the day's start (DAY_START) of an HH:MM:SS string: times either side of midnight compare."""
     h, m, sec = map(int, hms.split(":"))
     return (h - DAY_START) % 24 * 3600 + m * 60 + sec
+
+
+def log_to(path):
+    """Everything this program and the libraries under it print goes to this file, appended. A shell's
+    `>> file` (cmd.exe) locks the file against a second writer, which stopped a --takeover run from starting;
+    a file opened here stays open to other writers."""
+    fh = open(path, "a", buffering=1, encoding="utf-8", errors="replace")
+    os.dup2(fh.fileno(), 1)  # OpenCV and FFmpeg write to these two directly
+    os.dup2(fh.fileno(), 2)
+    sys.stdout = sys.stderr = fh  # started without a console, Python has no stdout of its own
 
 
 def cam_pass():
@@ -577,6 +588,7 @@ def main():
     ap.add_argument("--line", help="x1,y1,x2,y2,ix,iy as frame fractions 0-1 (skip clicking)")
     ap.add_argument("--save", help="write annotated video (single file source)")
     ap.add_argument("--nogui", action="store_true")
+    ap.add_argument("--log", help="append all output to this file (instead of a shell redirect)")
     ap.add_argument("--no-web", action="store_true", help="don't connect the phone page")
     ap.add_argument("--no-late", action="store_true",
                     help="turn the seen-late rule off (with the 4MP stream it double counts: 178 against 152)")
@@ -584,6 +596,8 @@ def main():
                     help="load and start tracking first, then stop the counter already running and carry on "
                          "from its numbers: under a second without counting instead of about 13")
     args = ap.parse_args()
+    if args.log:
+        log_to(args.log)
     args.weights, args.size = weights(args)
     if os.name == "nt" and all(is_ip(s) for s in args.sources):
         # A sleeping laptop counts nobody. On battery Windows sleeps after 15 idle minutes: on 2026-11-21 the

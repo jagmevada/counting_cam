@@ -23,7 +23,9 @@ foreach ($job in $jobs) {
         if (-not ($Takeover -and $job.Script -eq 'counter.py')) { "$($job.Script) is already running"; continue }
         $extra = "--takeover $extra"
     }
-    $cmd = 'cmd.exe /c ""' + $py + '" -u ' + $job.Script + ' ' + $extra + ' >> ' + $job.Log + ' 2>&1"'
+    # --log, not a shell redirect: cmd.exe's >> locks the file, and a -Takeover run could then not start.
+    # cmd.exe stays as the launcher: WMI cannot start the Microsoft Store python alias directly (code 8).
+    $cmd = 'cmd.exe /c ""' + $py + '" -u ' + $job.Script + ' ' + $extra + ' --log ' + $job.Log + '"'
     $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
         CommandLine = $cmd; CurrentDirectory = $PSScriptRoot }
     if ($r.ReturnValue -eq 0) { "$($job.Script): started, pid $($r.ProcessId)" }
