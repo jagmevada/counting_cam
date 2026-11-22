@@ -73,7 +73,9 @@ has stopped for 5 s.
 - Each picture shows its gate number large, with the camera address and that gate's in /
   out / frame rate small beneath. The header's second line ends with `TODAY: n`.
 - Head dots: yellow = not in yet, green = counted in, red = inside but never counted.
-- Gate 1 = camera .252, Gate 2 = camera .251. IN = walking towards the camera.
+- Gate 1 = camera .251, Gate 2 = camera .252 since 2026-11-22, when the owner moved the
+  cameras; on 2026-11-21 it was the other way round, so that day's recordings and tests
+  are named `gate1` = .252. IN = walking towards the camera.
 
 ## Phone page
 https://jagmevada.github.io/counting_cam/ (the `gh-pages` branch; source in `web/index.html`).
@@ -127,7 +129,21 @@ has less than 20 GB free. Replay a file through the counter:
 
 ## Count lines
 Stored in `line_<ip>.json` as fractions of the frame: `[[x1,y1],[x2,y2],[inside x,y]]`.
-Current lines are the owner's blue lines from `new_line.png`:
+**From 2026-11-22 the cameras are in new positions** (and swapped between the gates), so
+the lines were drawn again by the owner on a screenshot of each new view:
+
+| | Gate 1 (.251) | Gate 2 (.252) |
+|---|---|---|
+| line | (0.032, 0.453) – (0.952, 0.456) | not set yet: camera still being moved |
+| height at 720p | y ≈ 327 | |
+
+Gate 1's camera now looks along the four queue lanes; people come down the lanes towards
+the camera and leave them at the red mats. Measured on a setup clip: an adult's head is at
+y ≈ 246 when the feet reach the mats, so adults cross this line a step after the mats and
+a 1.1 m child crosses it at the mats. Yesterday's line files are kept beside the new ones
+as `line_<ip>.json.2026-11-21`.
+
+Until 2026-11-21 (old positions, the owner's blue lines from `new_line.png`):
 
 | | Gate 1 (.252) | Gate 2 (.251) |
 |---|---|---|

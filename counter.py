@@ -45,7 +45,9 @@ from ultralytics import YOLO  # noqa: E402
 HERE = Path(__file__).parent
 COUNTS = HERE / "counts.json"
 LOG = HERE / "counts.csv"
-CAMERAS = {"192.168.1.252": "Gate 1", "192.168.1.251": "Gate 2"}
+# Swapped on 2026-11-22 when the cameras were moved: until then .252 was Gate 1 and .251 Gate 2
+# (the 2026-11-21 recordings and tests are named that way).
+CAMERAS = {"192.168.1.251": "Gate 1", "192.168.1.252": "Gate 2"}
 WIN = "Dome entry counter"
 # ponytail: line hysteresis, as fractions of the frame (11 px / 90 px at 720p). A head counts
 # IN once it is MARGIN past the line, and OUT only when it is OUT_MARGIN back on the other
