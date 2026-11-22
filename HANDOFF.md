@@ -134,10 +134,11 @@ the lines were drawn again by the owner on a screenshot of each new view:
 
 | | Gate 1 (.251) | Gate 2 (.252) |
 |---|---|---|
-| line | (0.032, 0.453) – (0.952, 0.456) | not set yet: camera still being moved |
-| height at 720p | y ≈ 327 | |
+| line | (0.032, 0.453) – (0.952, 0.456) | (0.002, 0.396) – (0.996, 0.440) |
+| height at 720p | y ≈ 327 | y ≈ 285 at the left, 317 at the right |
+| drawing | `xx251_new_position_cross_line_blue.png` | `252_new_blue_crossline.png` (both in `D:/Project/JJ119`) |
 
-Gate 1's camera now looks along the four queue lanes; people come down the lanes towards
+Both cameras now look along the four queue lanes of their gate; people come down the lanes towards
 the camera and leave them at the red mats. Measured on a setup clip: an adult's head is at
 y ≈ 246 when the feet reach the mats, so adults cross this line a step after the mats and
 a 1.1 m child crosses it at the mats. Yesterday's line files are kept beside the new ones
